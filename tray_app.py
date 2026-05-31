@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,6 +42,7 @@ class TrayState:
     status_line: str = "Not configured"
     detail: str = ""
     repo_results: list[RepoResult] = field(default_factory=list)
+    review_assignments: list[ReviewerAssignment] = field(default_factory=list)
 
 
 class TrayApp:
@@ -82,6 +84,23 @@ class TrayApp:
                     )
                 )
 
+        if self.state.review_assignments:
+            items.append(pystray.Menu.SEPARATOR)
+            items.append(
+                pystray.MenuItem(
+                    self._review_section_text,
+                    self._noop,
+                    enabled=False,
+                )
+            )
+            for assignment in self.state.review_assignments:
+                items.append(
+                    pystray.MenuItem(
+                        self._review_menu_text(assignment),
+                        self._open_review_url(assignment),
+                    )
+                )
+
         items.extend(
             [
                 pystray.Menu.SEPARATOR,
@@ -100,6 +119,30 @@ class TrayApp:
             return f"{result.project}: {result.error}"
 
         return text
+
+    def _review_section_text(self, _icon: pystray.Icon) -> str:
+        count = len(self.state.review_assignments)
+        label = "1 review" if count == 1 else f"{count} reviews"
+        return f"Your review requests ({label})"
+
+    def _review_menu_text(self, assignment: ReviewerAssignment):
+        def text(_icon: pystray.Icon) -> str:
+            title = assignment.title
+            if len(title) > 45:
+                title = f"{title[:42]}..."
+            return f"!{assignment.iid} {title}"
+
+        return text
+
+    def _open_review_url(self, assignment: ReviewerAssignment):
+        def action(_icon: pystray.Icon, _item: object) -> None:
+            url = assignment.web_url or (
+                f"{self.config.api_base_url()}/{assignment.project}"
+                f"/-/merge_requests/{assignment.iid}"
+            )
+            webbrowser.open(url)
+
+        return action
 
     def _on_setup(self, icon: pystray.Icon) -> None:
         icon.visible = True
@@ -149,8 +192,8 @@ class TrayApp:
             detail = f"{len(ok_results)} repo(s)"
 
         self._notify_new_mrs(ok_results)
-        self._check_reviewer_assignments()
-        self._set_connected(total, status, detail, results)
+        review_assignments = self._check_reviewer_assignments()
+        self._set_connected(total, status, detail, results, review_assignments)
 
     def _notify_new_mrs(self, ok_results: list[RepoResult]) -> None:
         if not self._icon:
@@ -183,15 +226,18 @@ class TrayApp:
             )
         self._icon.notify(message, "Git Tray App")
 
-    def _check_reviewer_assignments(self) -> None:
-        if not self._icon or not self.config.watched_repos():
-            return
+    def _check_reviewer_assignments(self) -> list[ReviewerAssignment]:
+        if not self.config.watched_repos():
+            return []
 
         try:
             user_id = self._get_gitlab_user_id()
             assignments = fetch_reviewer_assignments(self.config, user_id)
         except (GitLabError, ValueError):
-            return
+            return []
+
+        if not self._icon:
+            return assignments
 
         current_keys = {assignment.key for assignment in assignments}
         watched_projects = {
@@ -214,6 +260,7 @@ class TrayApp:
 
         self._known_reviewer_assignments = current_keys
         save_reviewer_state(current_keys)
+        return sorted(assignments, key=lambda item: (item.project, item.iid))
 
     def _get_gitlab_user_id(self) -> int:
         if self._gitlab_user_id is None:
@@ -233,6 +280,7 @@ class TrayApp:
         status_line: str,
         detail: str,
         results: list[RepoResult],
+        review_assignments: list[ReviewerAssignment] | None = None,
     ) -> None:
         self.state = TrayState(
             connected=True,
@@ -240,6 +288,7 @@ class TrayApp:
             status_line=status_line,
             detail=detail,
             repo_results=results,
+            review_assignments=review_assignments or [],
         )
         self._update_tray()
 
@@ -255,6 +304,7 @@ class TrayApp:
             status_line=status_line,
             detail=detail,
             repo_results=results or [],
+            review_assignments=[],
         )
         self._update_tray()
 

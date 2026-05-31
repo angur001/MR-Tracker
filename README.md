@@ -36,6 +36,7 @@ Settings are saved to `%USERPROFILE%\.git_tray_app\config.json`.
 - **Refresh now** forces an immediate check
 - A **desktop notification** when a repo’s open MR count increases (not on first poll)
 - A **desktop notification** when you are **assigned as reviewer** on an open MR in a ★-watched repo (not for MRs already assigned before you enabled watching)
+- **Your review requests** in the tray menu — click an MR to open it in the browser
 
 ## GitLab token
 
